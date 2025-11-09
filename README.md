@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 This is a Kotlin Multiplatform project targeting Desktop (JVM).
 
 * [/composeApp](./composeApp/src) is for code that will be shared across your Compose Multiplatform applications.
@@ -25,3 +26,7 @@ in your IDE’s toolbar or run it directly from the terminal:
 ---
 
 Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
+=======
+# herramienta-automatizaci-n-tareas
+Proyecto DAM (PSP)
+>>>>>>> a54b40a5700ee95e78a604bb13bddfc67a7d1a2e
