@@ -51,8 +51,13 @@ object GestorTareas {
                     tarea.error = "Código de salida: $codigoSalida"
                 }
             } catch (e: Exception) {
+                // Si falla la ejecución, marcamos ERROR y registramos hora también
                 tarea.estado = EstadoTarea.ERROR
                 tarea.error = e.message ?: "Error desconocido"
+                tarea.ultimaEjecucion = LocalDateTime.now()
+            } finally {
+                // Guardar log SIEMPRE (éxito o error). Ignoramos cualquier fallo al escribir.
+                try { LogFiles.escribirLogEjecucion(tarea) } catch (_: Exception) {}
             }
         }
     }
