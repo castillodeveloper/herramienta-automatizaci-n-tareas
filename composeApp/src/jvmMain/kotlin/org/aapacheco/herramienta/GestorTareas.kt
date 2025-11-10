@@ -67,4 +67,29 @@ object GestorTareas {
     fun eliminarTarea(id: Int) {
         tareas.remove(id)
     }
+    /**
+     * Inicia un bucle que revisa periódicamente todas las tareas
+     * con intervalo > 0 y las ejecuta automáticamente.
+     */
+    fun iniciarProgramador() {
+        GlobalScope.launch(Dispatchers.IO) {
+            while (true) {
+                val ahora = LocalDateTime.now()
+                tareas.values.forEach { tarea ->
+                    if (tarea.intervalo > 0) {
+                        val ultima = tarea.ultimaEjecucion
+                        val tiempoTranscurrido = ultima?.let {
+                            java.time.Duration.between(it, ahora).seconds
+                        } ?: Long.MAX_VALUE
+
+                        if (tiempoTranscurrido >= tarea.intervalo) {
+                            println("⏰ Ejecutando tarea automática: ${tarea.nombre}")
+                            ejecutarTarea(tarea.id)
+                        }
+                    }
+                }
+                delay(1000) // revisa cada segundo
+            }
+        }
+    }
 }
