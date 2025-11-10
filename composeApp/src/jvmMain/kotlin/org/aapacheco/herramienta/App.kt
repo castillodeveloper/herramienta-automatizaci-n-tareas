@@ -11,6 +11,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import java.time.format.DateTimeFormatter
+
+// Formato de hora para "Última ejecución"
+private val HHMMSS: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 @Composable
 fun App() {
@@ -30,7 +34,9 @@ fun App() {
         }
 
         Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("Herramienta de Automatización de Tareas", style = MaterialTheme.typography.h6)
@@ -41,25 +47,35 @@ fun App() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedTextField(
-                    value = nombre, onValueChange = { nombre = it },
-                    label = { Text("Nombre") }, singleLine = true, modifier = Modifier.width(220.dp)
+                    value = nombre,
+                    onValueChange = { nombre = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                    modifier = Modifier.width(220.dp)
                 )
                 OutlinedTextField(
-                    value = comando, onValueChange = { comando = it },
+                    value = comando,
+                    onValueChange = { comando = it },
                     label = { Text("Comando o script (p. ej. dir / echo Hola)") },
-                    singleLine = true, modifier = Modifier.weight(1f)
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
                     value = intervaloTxt,
                     onValueChange = { intervaloTxt = it.filter(Char::isDigit) },
-                    label = { Text("Intervalo (s)") }, singleLine = true, modifier = Modifier.width(140.dp)
+                    label = { Text("Intervalo (s)") },
+                    singleLine = true,
+                    modifier = Modifier.width(140.dp)
                 )
                 Button(onClick = {
-                    val n = nombre.trim(); val c = comando.trim()
+                    val n = nombre.trim()
+                    val c = comando.trim()
                     val intervalo = intervaloTxt.toLongOrNull() ?: 0
                     if (n.isNotEmpty() && c.isNotEmpty()) {
                         GestorTareas.agregarTarea(n, c, intervalo)
-                        nombre = ""; comando = ""; intervaloTxt = "0"
+                        nombre = ""
+                        comando = ""
+                        intervaloTxt = "0"
                     }
                 }) { Text("Añadir") }
 
@@ -68,13 +84,20 @@ fun App() {
                         GestorTareas.iniciarProgramador()
                         programadorActivo = true
                     }
-                }) { Text(if (programadorActivo) "Programador activo" else "Iniciar programador") }
+                }) {
+                    Text(if (programadorActivo) "Programador activo" else "Iniciar programador")
+                }
             }
 
             Divider()
 
-            LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(tareas, key = { it.id }) { t -> TareaRow(t) }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(tareas, key = { it.id }) { t ->
+                    TareaRow(t)
+                }
             }
         }
     }
@@ -90,8 +113,9 @@ private fun TareaRow(t: Tarea) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
+            val ultima = t.ultimaEjecucion?.format(HHMMSS) ?: "-"
             Text(
-                "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | estado: ${t.estado}",
+                "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | estado: ${t.estado}",
                 modifier = Modifier.weight(1f)
             )
             Button(onClick = { GestorTareas.ejecutarTarea(t.id) }) { Text("Ejecutar") }
@@ -121,7 +145,9 @@ private fun TareaRow(t: Tarea) {
                         Text(texto)
                     }
                 },
-                confirmButton = { TextButton(onClick = { verLog = false }) { Text("Cerrar") } }
+                confirmButton = {
+                    TextButton(onClick = { verLog = false }) { Text("Cerrar") }
+                }
             )
         }
     }
