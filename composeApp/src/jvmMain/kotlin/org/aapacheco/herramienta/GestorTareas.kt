@@ -100,4 +100,13 @@ object GestorTareas {
         programadorJob?.cancel()
         programadorJob = null
     }
+    /** Actualiza una tarea existente. Devuelve true si se modificó. */
+    fun actualizarTarea(id: Int, nombre: String, comando: String, intervalo: Long): Boolean {
+        val t = tareas[id] ?: return false
+        t.nombre = nombre
+        t.comando = comando
+        t.intervalo = if (intervalo < 0) 0 else intervalo
+        return true
+    }
+
 }
