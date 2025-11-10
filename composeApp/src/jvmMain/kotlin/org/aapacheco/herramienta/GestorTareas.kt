@@ -13,6 +13,7 @@ object GestorTareas {
 
     private val tareas = ConcurrentHashMap<Int, Tarea>()
     private var contadorId = 0
+    private var programadorJob: Job? = null
 
     /**
      * Agrega una nueva tarea al gestor.
@@ -56,40 +57,42 @@ object GestorTareas {
         }
     }
 
-    /**
-     * Devuelve la lista de tareas registradas.
-     */
+    /** Devuelve la lista de tareas registradas. */
     fun listarTareas(): List<Tarea> = tareas.values.toList()
 
-    /**
-     * Elimina una tarea del gestor.
-     */
+    /** Elimina una tarea del gestor. */
     fun eliminarTarea(id: Int) {
         tareas.remove(id)
     }
+
     /**
      * Inicia un bucle que revisa periódicamente todas las tareas
      * con intervalo > 0 y las ejecuta automáticamente.
      */
     fun iniciarProgramador() {
-        GlobalScope.launch(Dispatchers.IO) {
+        if (programadorJob?.isActive == true) return
+        programadorJob = GlobalScope.launch(Dispatchers.IO) {
             while (true) {
                 val ahora = LocalDateTime.now()
                 tareas.values.forEach { tarea ->
                     if (tarea.intervalo > 0) {
                         val ultima = tarea.ultimaEjecucion
-                        val tiempoTranscurrido = ultima?.let {
-                            java.time.Duration.between(it, ahora).seconds
-                        } ?: Long.MAX_VALUE
-
-                        if (tiempoTranscurrido >= tarea.intervalo) {
+                        val trans = ultima?.let { java.time.Duration.between(it, ahora).seconds }
+                            ?: Long.MAX_VALUE
+                        val puede = (tarea.estado != EstadoTarea.EJECUTANDO) && (trans >= tarea.intervalo)
+                        if (puede) {
                             println("⏰ Ejecutando tarea automática: ${tarea.nombre}")
                             ejecutarTarea(tarea.id)
                         }
                     }
                 }
-                delay(1000) // revisa cada segundo
+                delay(1000)
             }
         }
+    }
+
+    fun detenerProgramador() {
+        programadorJob?.cancel()
+        programadorJob = null
     }
 }
