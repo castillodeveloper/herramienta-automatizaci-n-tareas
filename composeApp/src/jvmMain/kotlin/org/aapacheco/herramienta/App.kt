@@ -87,6 +87,9 @@ fun App() {
                 }) {
                     Text(if (programadorActivo) "Programador activo" else "Iniciar programador")
                 }
+                OutlinedButton(onClick = { LogFiles.abrirCarpetaLogs() }) {
+                    Text("Abrir carpeta de logs")
+                }
             }
 
             Divider()
