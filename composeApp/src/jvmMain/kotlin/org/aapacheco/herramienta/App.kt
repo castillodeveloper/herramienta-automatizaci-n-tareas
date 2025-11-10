@@ -87,6 +87,7 @@ fun App() {
                 }) {
                     Text(if (programadorActivo) "Programador activo" else "Iniciar programador")
                 }
+
                 OutlinedButton(onClick = { LogFiles.abrirCarpetaLogs() }) {
                     Text("Abrir carpeta de logs")
                 }
@@ -110,6 +111,12 @@ fun App() {
 private fun TareaRow(t: Tarea) {
     var verLog by remember { mutableStateOf(false) }
 
+    // Estado para el diálogo de edición
+    var editOpen by remember { mutableStateOf(false) }
+    var editNombre by remember { mutableStateOf(t.nombre) }
+    var editComando by remember { mutableStateOf(t.comando) }
+    var editIntervalo by remember { mutableStateOf(t.intervalo.toString()) }
+
     Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -121,8 +128,19 @@ private fun TareaRow(t: Tarea) {
                 "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | estado: ${t.estado}",
                 modifier = Modifier.weight(1f)
             )
-            Button(onClick = { GestorTareas.ejecutarTarea(t.id) }) { Text("Ejecutar") }
+            Button(
+                onClick = { GestorTareas.ejecutarTarea(t.id) },
+                enabled = t.estado != EstadoTarea.EJECUTANDO
+            ) { Text("Ejecutar") }
+
             OutlinedButton(onClick = { verLog = true }) { Text("Ver log") }
+            OutlinedButton(onClick = {
+                // precargar valores actuales y abrir diálogo
+                editNombre = t.nombre
+                editComando = t.comando
+                editIntervalo = t.intervalo.toString()
+                editOpen = true
+            }) { Text("Editar") }
             OutlinedButton(onClick = { GestorTareas.eliminarTarea(t.id) }) { Text("Eliminar") }
         }
 
@@ -150,6 +168,58 @@ private fun TareaRow(t: Tarea) {
                 },
                 confirmButton = {
                     TextButton(onClick = { verLog = false }) { Text("Cerrar") }
+                }
+            )
+        }
+
+        if (editOpen) {
+            val intervaloVal = editIntervalo.toLongOrNull() ?: -1
+            val valido = editNombre.isNotBlank() && editComando.isNotBlank() && intervaloVal >= 0
+
+            AlertDialog(
+                onDismissRequest = { editOpen = false },
+                title = { Text("Editar tarea #${t.id}") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = editNombre,
+                            onValueChange = { editNombre = it },
+                            label = { Text("Nombre") },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = editComando,
+                            onValueChange = { editComando = it },
+                            label = { Text("Comando o script") },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = editIntervalo,
+                            onValueChange = { editIntervalo = it.filter(Char::isDigit) },
+                            label = { Text("Intervalo (s)") },
+                            singleLine = true
+                        )
+                        if (!valido) {
+                            Text("Completa todos los campos (intervalo ≥ 0).", color = MaterialTheme.colors.error)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            GestorTareas.actualizarTarea(
+                                t.id,
+                                editNombre.trim(),
+                                editComando.trim(),
+                                (editIntervalo.toLongOrNull() ?: 0L)
+                            )
+                            editOpen = false
+                        },
+                        enabled = valido
+                    ) { Text("Guardar") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { editOpen = false }) { Text("Cancelar") }
                 }
             )
         }
