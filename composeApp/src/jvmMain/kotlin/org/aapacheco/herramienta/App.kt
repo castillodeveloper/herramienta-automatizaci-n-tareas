@@ -1,10 +1,7 @@
-@file:OptIn(ExperimentalLayoutApi::class)
-
 package org.aapacheco.herramienta
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -23,8 +20,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 
 // Formato de hora para "Última ejecución"
 private val HHMMSS: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -43,7 +38,10 @@ fun App() {
         var tareas by remember { mutableStateOf(listOf<Tarea>()) }
         LaunchedEffect(Unit) {
             GestorTareas.cargarDesdeDisco()
-            while (true) { tareas = GestorTareas.listarTareas(); delay(500) }
+            while (true) {
+                tareas = GestorTareas.listarTareas()
+                delay(500)
+            }
         }
 
         Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
@@ -149,7 +147,6 @@ fun App() {
     }
 }
 
-
 @Composable
 private fun TareaRow(
     t: Tarea,
@@ -168,20 +165,18 @@ private fun TareaRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Descripción + pill de estado
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val ultima = t.ultimaEjecucion?.format(HHMMSS) ?: "-"
-                Text(
-                    "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | ",
-                    modifier = Modifier.padding(end = 6.dp),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                EstadoPill(t.estado)
-            }
+            // Texto DESCRIPCIÓN (ocupa el espacio disponible) + pill (no se parte)
+            val ultima = t.ultimaEjecucion?.format(HHMMSS) ?: "-"
+            Text(
+                "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | ",
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            )
+            EstadoPill(t.estado)
 
             // Ejecutar (deshabilitado si ya está ejecutando)
             Button(
@@ -192,7 +187,7 @@ private fun TareaRow(
                 enabled = t.estado != EstadoTarea.EJECUTANDO
             ) { Text("Ejecutar") }
 
-            // NUEVO: Cancelar (solo visible cuando está ejecutando)
+            // Cancelar solo cuando está ejecutando
             if (t.estado == EstadoTarea.EJECUTANDO) {
                 OutlinedButton(onClick = {
                     val ok = GestorTareas.cancelarEjecucion(t.id)
@@ -300,7 +295,6 @@ private fun TareaRow(
     }
 }
 
-
 /** Pill de color para el estado de la tarea */
 @Composable
 private fun EstadoPill(estado: EstadoTarea) {
@@ -315,6 +309,9 @@ private fun EstadoPill(estado: EstadoTarea) {
         color = fg,
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
