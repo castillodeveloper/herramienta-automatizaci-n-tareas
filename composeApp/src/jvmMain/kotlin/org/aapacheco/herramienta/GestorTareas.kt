@@ -29,9 +29,10 @@ object GestorTareas {
     fun agregarTarea(nombre: String, comando: String, intervalo: Long = 0): Tarea {
         val tarea = Tarea(++contadorId, nombre, comando, intervalo)
         tareas[tarea.id] = tarea
-        guardarEnDisco() // <<-- persistir
+        guardarEnDisco()                 // ← guarda tras añadir
         return tarea
     }
+
 
     /**
      * Ejecuta una tarea concreta por ID, usando ProcessBuilder.
@@ -77,8 +78,9 @@ object GestorTareas {
     /** Elimina una tarea del gestor. */
     fun eliminarTarea(id: Int) {
         tareas.remove(id)
-        guardarEnDisco() // <<-- persistir
+        guardarEnDisco()                 // ← guarda tras borrar
     }
+
 
     /**
      * Inicia un bucle que revisa periódicamente todas las tareas
@@ -116,9 +118,10 @@ object GestorTareas {
         t.nombre = nombre
         t.comando = comando
         t.intervalo = if (intervalo < 0) 0 else intervalo
-        guardarEnDisco() // <<-- persistir
+        guardarEnDisco()                 // ← guarda tras editar
         return true
     }
+
 
     @Synchronized
     fun cargarDesdeDisco() {
