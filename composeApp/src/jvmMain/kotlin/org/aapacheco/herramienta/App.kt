@@ -1,7 +1,10 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package org.aapacheco.herramienta
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -14,11 +17,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 
 // Formato de hora para "Última ejecución"
 private val HHMMSS: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -34,98 +40,108 @@ fun App() {
         var intervaloTxt by remember { mutableStateOf("0") }
         var programadorActivo by remember { mutableStateOf(false) }
 
-        // Refresco periódico de la lista para ver cambios de estado/salida
         var tareas by remember { mutableStateOf(listOf<Tarea>()) }
         LaunchedEffect(Unit) {
-            GestorTareas.cargarDesdeDisco()   // ← carga una vez
-            while (true) {
-                tareas = GestorTareas.listarTareas()
-                delay(500)
-            }
+            GestorTareas.cargarDesdeDisco()
+            while (true) { tareas = GestorTareas.listarTareas(); delay(500) }
         }
 
-        Scaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) }
-        ) { padding ->
+        Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
+            // Contenedor CENTRADO y FIJO (ancho constante)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
-                    .padding(padding),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(padding)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.Top,
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Herramienta de Automatización de Tareas", style = MaterialTheme.typography.h6)
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                // ancho fijo del contenido
+                Column(
+                    modifier = Modifier.width(980.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    OutlinedTextField(
-                        value = nombre,
-                        onValueChange = { nombre = it },
-                        label = { Text("Nombre") },
-                        singleLine = true,
-                        modifier = Modifier.width(220.dp)
+                    Text(
+                        "Herramienta de Automatización de Tareas",
+                        style = MaterialTheme.typography.h6
                     )
-                    OutlinedTextField(
-                        value = comando,
-                        onValueChange = { comando = it },
-                        label = { Text("Comando o script (p. ej. dir / echo Hola)") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = intervaloTxt,
-                        onValueChange = { intervaloTxt = it.filter(Char::isDigit) },
-                        label = { Text("Intervalo (s)") },
-                        singleLine = true,
-                        modifier = Modifier.width(140.dp)
-                    )
-                    Button(onClick = {
-                        val n = nombre.trim()
-                        val c = comando.trim()
-                        val intervalo = intervaloTxt.toLongOrNull() ?: 0
-                        if (n.isNotEmpty() && c.isNotEmpty()) {
-                            GestorTareas.agregarTarea(n, c, intervalo)
-                            nombre = ""; comando = ""; intervaloTxt = "0"
-                            scope.launch { snackbarHostState.showSnackbar("Tarea '$n' añadida") }
-                        } else {
-                            scope.launch { snackbarHostState.showSnackbar("Completa nombre y comando") }
-                        }
-                    }) { Text("Añadir") }
 
-                    // Toggle Iniciar/Detener programador
-                    Button(onClick = {
-                        if (programadorActivo) {
-                            GestorTareas.detenerProgramador()
-                            programadorActivo = false
-                            scope.launch { snackbarHostState.showSnackbar("Programador detenido") }
-                        } else {
-                            GestorTareas.iniciarProgramador()
-                            programadorActivo = true
-                            scope.launch { snackbarHostState.showSnackbar("Programador iniciado") }
-                        }
-                    }) {
-                        Text(if (programadorActivo) "Detener programador" else "Iniciar programador")
-                    }
-
-                    OutlinedButton(onClick = { LogFiles.abrirCarpetaLogs() }) {
-                        Text("Abrir carpeta de logs")
-                    }
-                }
-
-                Divider()
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(tareas, key = { it.id }) { t ->
-                        TareaRow(
-                            t = t,
-                            onInfo = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                    // --- FILA FIJA DE CONTROLES SUPERIORES ---
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = nombre,
+                            onValueChange = { nombre = it },
+                            label = { Text("Nombre") },
+                            singleLine = true,
+                            modifier = Modifier.width(240.dp)
                         )
+
+                        OutlinedTextField(
+                            value = comando,
+                            onValueChange = { comando = it },
+                            label = { Text("Comando") },                 // label corto
+                            placeholder = { Text("p. ej.  dir    /    echo Hola") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)               // ocupa el resto
+                        )
+
+                        OutlinedTextField(
+                            value = intervaloTxt,
+                            onValueChange = { intervaloTxt = it.filter(Char::isDigit) },
+                            label = { Text("Intervalo (s)") },
+                            singleLine = true,
+                            modifier = Modifier.width(140.dp)
+                        )
+
+                        Button(onClick = {
+                            val n = nombre.trim()
+                            val c = comando.trim()
+                            val intervalo = intervaloTxt.toLongOrNull() ?: 0
+                            if (n.isNotEmpty() && c.isNotEmpty()) {
+                                GestorTareas.agregarTarea(n, c, intervalo)
+                                nombre = ""; comando = ""; intervaloTxt = "0"
+                                scope.launch { snackbarHostState.showSnackbar("Tarea '$n' añadida") }
+                            } else {
+                                scope.launch { snackbarHostState.showSnackbar("Completa nombre y comando") }
+                            }
+                        }) { Text("Añadir") }
+
+                        Button(onClick = {
+                            if (programadorActivo) {
+                                GestorTareas.detenerProgramador()
+                                programadorActivo = false
+                                scope.launch { snackbarHostState.showSnackbar("Programador detenido") }
+                            } else {
+                                GestorTareas.iniciarProgramador()
+                                programadorActivo = true
+                                scope.launch { snackbarHostState.showSnackbar("Programador iniciado") }
+                            }
+                        }) { Text(if (programadorActivo) "Detener" else "Iniciar") }
+
+                        OutlinedButton(onClick = { LogFiles.abrirCarpetaLogs() }) {
+                            Text("Abrir carpeta de logs")
+                        }
+                    }
+
+                    Divider()
+
+                    // --- LISTA DE TAREAS ---
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(tareas, key = { it.id }) { t ->
+                            TareaRow(
+                                t = t,
+                                onInfo = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                            )
+                        }
                     }
                 }
             }
@@ -133,20 +149,17 @@ fun App() {
     }
 }
 
+
 @Composable
 private fun TareaRow(
     t: Tarea,
     onInfo: (String) -> Unit
 ) {
     var verLog by remember { mutableStateOf(false) }
-
-    // Estado para el diálogo de edición
     var editOpen by remember { mutableStateOf(false) }
     var editNombre by remember { mutableStateOf(t.nombre) }
     var editComando by remember { mutableStateOf(t.comando) }
     var editIntervalo by remember { mutableStateOf(t.intervalo.toString()) }
-
-    // Confirmación al eliminar
     var confirmDelete by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
@@ -155,7 +168,6 @@ private fun TareaRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Texto descriptivo + pill de estado a la derecha
             Row(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically
@@ -178,7 +190,6 @@ private fun TareaRow(
 
             OutlinedButton(onClick = { verLog = true }) { Text("Ver log") }
             OutlinedButton(onClick = {
-                // precargar valores actuales y abrir diálogo
                 editNombre = t.nombre
                 editComando = t.comando
                 editIntervalo = t.intervalo.toString()
@@ -223,22 +234,17 @@ private fun TareaRow(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
-                            value = editNombre,
-                            onValueChange = { editNombre = it },
-                            label = { Text("Nombre") },
-                            singleLine = true
+                            value = editNombre, onValueChange = { editNombre = it },
+                            label = { Text("Nombre") }, singleLine = true
                         )
                         OutlinedTextField(
-                            value = editComando,
-                            onValueChange = { editComando = it },
-                            label = { Text("Comando o script") },
-                            singleLine = true
+                            value = editComando, onValueChange = { editComando = it },
+                            label = { Text("Comando o script") }, singleLine = true
                         )
                         OutlinedTextField(
                             value = editIntervalo,
                             onValueChange = { editIntervalo = it.filter(Char::isDigit) },
-                            label = { Text("Intervalo (s)") },
-                            singleLine = true
+                            label = { Text("Intervalo (s)") }, singleLine = true
                         )
                         if (!valido) {
                             Text("Completa todos los campos (intervalo ≥ 0).", color = MaterialTheme.colors.error)
@@ -276,9 +282,7 @@ private fun TareaRow(
                         onInfo("Tarea eliminada: ${t.nombre}")
                     }) { Text("Eliminar") }
                 },
-                dismissButton = {
-                    TextButton(onClick = { confirmDelete = false }) { Text("Cancelar") }
-                }
+                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancelar") } }
             )
         }
     }
