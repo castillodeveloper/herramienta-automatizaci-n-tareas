@@ -1,23 +1,24 @@
 package org.aapacheco.herramienta
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
-import java.time.format.DateTimeFormatter
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.time.format.DateTimeFormatter
 
 // Formato de hora para "Última ejecución"
 private val HHMMSS: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -25,6 +26,9 @@ private val HHMMSS: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 @Composable
 fun App() {
     MaterialTheme {
+        val snackbarHostState = remember { SnackbarHostState() }
+        val scope = rememberCoroutineScope()
+
         var nombre by remember { mutableStateOf("") }
         var comando by remember { mutableStateOf("") }
         var intervaloTxt by remember { mutableStateOf("0") }
@@ -40,78 +44,89 @@ fun App() {
             }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("Herramienta de Automatización de Tareas", style = MaterialTheme.typography.h6)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) }
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+                    .padding(padding),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedTextField(
-                    value = nombre,
-                    onValueChange = { nombre = it },
-                    label = { Text("Nombre") },
-                    singleLine = true,
-                    modifier = Modifier.width(220.dp)
-                )
-                OutlinedTextField(
-                    value = comando,
-                    onValueChange = { comando = it },
-                    label = { Text("Comando o script (p. ej. dir / echo Hola)") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = intervaloTxt,
-                    onValueChange = { intervaloTxt = it.filter(Char::isDigit) },
-                    label = { Text("Intervalo (s)") },
-                    singleLine = true,
-                    modifier = Modifier.width(140.dp)
-                )
-                Button(onClick = {
-                    val n = nombre.trim()
-                    val c = comando.trim()
-                    val intervalo = intervaloTxt.toLongOrNull() ?: 0
-                    if (n.isNotEmpty() && c.isNotEmpty()) {
-                        GestorTareas.agregarTarea(n, c, intervalo)
-                        nombre = ""
-                        comando = ""
-                        intervaloTxt = "0"
-                    }
-                }) { Text("Añadir") }
+                Text("Herramienta de Automatización de Tareas", style = MaterialTheme.typography.h6)
 
-                // Toggle Iniciar/Detener programador
-                Button(onClick = {
-                    if (programadorActivo) {
-                        GestorTareas.detenerProgramador()
-                        programadorActivo = false
-                    } else {
-                        GestorTareas.iniciarProgramador()
-                        programadorActivo = true
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = nombre,
+                        onValueChange = { nombre = it },
+                        label = { Text("Nombre") },
+                        singleLine = true,
+                        modifier = Modifier.width(220.dp)
+                    )
+                    OutlinedTextField(
+                        value = comando,
+                        onValueChange = { comando = it },
+                        label = { Text("Comando o script (p. ej. dir / echo Hola)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = intervaloTxt,
+                        onValueChange = { intervaloTxt = it.filter(Char::isDigit) },
+                        label = { Text("Intervalo (s)") },
+                        singleLine = true,
+                        modifier = Modifier.width(140.dp)
+                    )
+                    Button(onClick = {
+                        val n = nombre.trim()
+                        val c = comando.trim()
+                        val intervalo = intervaloTxt.toLongOrNull() ?: 0
+                        if (n.isNotEmpty() && c.isNotEmpty()) {
+                            GestorTareas.agregarTarea(n, c, intervalo)
+                            nombre = ""; comando = ""; intervaloTxt = "0"
+                            scope.launch { snackbarHostState.showSnackbar("Tarea '$n' añadida") }
+                        } else {
+                            scope.launch { snackbarHostState.showSnackbar("Completa nombre y comando") }
+                        }
+                    }) { Text("Añadir") }
+
+                    // Toggle Iniciar/Detener programador
+                    Button(onClick = {
+                        if (programadorActivo) {
+                            GestorTareas.detenerProgramador()
+                            programadorActivo = false
+                            scope.launch { snackbarHostState.showSnackbar("Programador detenido") }
+                        } else {
+                            GestorTareas.iniciarProgramador()
+                            programadorActivo = true
+                            scope.launch { snackbarHostState.showSnackbar("Programador iniciado") }
+                        }
+                    }) {
+                        Text(if (programadorActivo) "Detener programador" else "Iniciar programador")
                     }
-                }) {
-                    Text(if (programadorActivo) "Detener programador" else "Iniciar programador")
+
+                    OutlinedButton(onClick = { LogFiles.abrirCarpetaLogs() }) {
+                        Text("Abrir carpeta de logs")
+                    }
                 }
 
-                OutlinedButton(onClick = { LogFiles.abrirCarpetaLogs() }) {
-                    Text("Abrir carpeta de logs")
-                }
-            }
+                Divider()
 
-            Divider()
-
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(tareas, key = { it.id }) { t ->
-                    TareaRow(t)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(tareas, key = { it.id }) { t ->
+                        TareaRow(
+                            t = t,
+                            onInfo = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                        )
+                    }
                 }
             }
         }
@@ -119,7 +134,10 @@ fun App() {
 }
 
 @Composable
-private fun TareaRow(t: Tarea) {
+private fun TareaRow(
+    t: Tarea,
+    onInfo: (String) -> Unit
+) {
     var verLog by remember { mutableStateOf(false) }
 
     // Estado para el diálogo de edición
@@ -127,6 +145,9 @@ private fun TareaRow(t: Tarea) {
     var editNombre by remember { mutableStateOf(t.nombre) }
     var editComando by remember { mutableStateOf(t.comando) }
     var editIntervalo by remember { mutableStateOf(t.intervalo.toString()) }
+
+    // Confirmación al eliminar
+    var confirmDelete by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
         Row(
@@ -148,7 +169,10 @@ private fun TareaRow(t: Tarea) {
             }
 
             Button(
-                onClick = { GestorTareas.ejecutarTarea(t.id) },
+                onClick = {
+                    GestorTareas.ejecutarTarea(t.id)
+                    onInfo("Ejecución lanzada: ${t.nombre}")
+                },
                 enabled = t.estado != EstadoTarea.EJECUTANDO
             ) { Text("Ejecutar") }
 
@@ -160,7 +184,7 @@ private fun TareaRow(t: Tarea) {
                 editIntervalo = t.intervalo.toString()
                 editOpen = true
             }) { Text("Editar") }
-            OutlinedButton(onClick = { GestorTareas.eliminarTarea(t.id) }) { Text("Eliminar") }
+            OutlinedButton(onClick = { confirmDelete = true }) { Text("Eliminar") }
         }
 
         if (verLog) {
@@ -185,9 +209,7 @@ private fun TareaRow(t: Tarea) {
                         Text(texto)
                     }
                 },
-                confirmButton = {
-                    TextButton(onClick = { verLog = false }) { Text("Cerrar") }
-                }
+                confirmButton = { TextButton(onClick = { verLog = false }) { Text("Cerrar") } }
             )
         }
 
@@ -233,12 +255,29 @@ private fun TareaRow(t: Tarea) {
                                 (editIntervalo.toLongOrNull() ?: 0L)
                             )
                             editOpen = false
+                            onInfo("Tarea actualizada: ${t.id}")
                         },
                         enabled = valido
                     ) { Text("Guardar") }
                 },
+                dismissButton = { TextButton(onClick = { editOpen = false }) { Text("Cancelar") } }
+            )
+        }
+
+        if (confirmDelete) {
+            AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text("Eliminar tarea") },
+                text = { Text("¿Seguro que quieres eliminar '${t.nombre}'?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        GestorTareas.eliminarTarea(t.id)
+                        confirmDelete = false
+                        onInfo("Tarea eliminada: ${t.nombre}")
+                    }) { Text("Eliminar") }
+                },
                 dismissButton = {
-                    TextButton(onClick = { editOpen = false }) { Text("Cancelar") }
+                    TextButton(onClick = { confirmDelete = false }) { Text("Cancelar") }
                 }
             )
         }
