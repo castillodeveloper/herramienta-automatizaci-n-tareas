@@ -15,7 +15,7 @@ object LogFiles {
     private val logsDir: Path = baseDir.resolve("logs")
 
     private val humanStamp = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    private val fileStamp  = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+    private val fileStamp  = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS")
 
     init {
         try { Files.createDirectories(logsDir) } catch (_: Exception) {}

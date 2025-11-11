@@ -27,6 +27,7 @@ fun App() {
         // Refresco periódico de la lista para ver cambios de estado/salida
         var tareas by remember { mutableStateOf(listOf<Tarea>()) }
         LaunchedEffect(Unit) {
+            GestorTareas.cargarDesdeDisco()   // ← carga una vez
             while (true) {
                 tareas = GestorTareas.listarTareas()
                 delay(500)
@@ -79,13 +80,17 @@ fun App() {
                     }
                 }) { Text("Añadir") }
 
+                // ⬇️ Toggle Iniciar/Detener programador
                 Button(onClick = {
-                    if (!programadorActivo) {
+                    if (programadorActivo) {
+                        GestorTareas.detenerProgramador()
+                        programadorActivo = false
+                    } else {
                         GestorTareas.iniciarProgramador()
                         programadorActivo = true
                     }
                 }) {
-                    Text(if (programadorActivo) "Programador activo" else "Iniciar programador")
+                    Text(if (programadorActivo) "Detener programador" else "Iniciar programador")
                 }
 
                 OutlinedButton(onClick = { LogFiles.abrirCarpetaLogs() }) {

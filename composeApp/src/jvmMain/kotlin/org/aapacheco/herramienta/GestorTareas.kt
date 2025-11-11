@@ -5,6 +5,10 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.Properties
 
 /**
  * Gestiona la lista de tareas y sus ejecuciones concurrentes.
@@ -15,12 +19,17 @@ object GestorTareas {
     private var contadorId = 0
     private var programadorJob: Job? = null
 
+    // ===== Persistencia simple en .properties =====
+    private val baseDir: Path = Paths.get(System.getProperty("user.home"), "HerramientaAutomatizacion")
+    private val dataFile: Path = baseDir.resolve("tareas.properties")
+
     /**
      * Agrega una nueva tarea al gestor.
      */
     fun agregarTarea(nombre: String, comando: String, intervalo: Long = 0): Tarea {
         val tarea = Tarea(++contadorId, nombre, comando, intervalo)
         tareas[tarea.id] = tarea
+        guardarEnDisco() // <<-- persistir
         return tarea
     }
 
@@ -68,6 +77,7 @@ object GestorTareas {
     /** Elimina una tarea del gestor. */
     fun eliminarTarea(id: Int) {
         tareas.remove(id)
+        guardarEnDisco() // <<-- persistir
     }
 
     /**
@@ -82,8 +92,7 @@ object GestorTareas {
                 tareas.values.forEach { tarea ->
                     if (tarea.intervalo > 0) {
                         val ultima = tarea.ultimaEjecucion
-                        val trans = ultima?.let { java.time.Duration.between(it, ahora).seconds }
-                            ?: Long.MAX_VALUE
+                        val trans = ultima?.let { java.time.Duration.between(it, ahora).seconds } ?: Long.MAX_VALUE
                         val puede = (tarea.estado != EstadoTarea.EJECUTANDO) && (trans >= tarea.intervalo)
                         if (puede) {
                             println("⏰ Ejecutando tarea automática: ${tarea.nombre}")
@@ -100,13 +109,57 @@ object GestorTareas {
         programadorJob?.cancel()
         programadorJob = null
     }
+
     /** Actualiza una tarea existente. Devuelve true si se modificó. */
     fun actualizarTarea(id: Int, nombre: String, comando: String, intervalo: Long): Boolean {
         val t = tareas[id] ?: return false
         t.nombre = nombre
         t.comando = comando
         t.intervalo = if (intervalo < 0) 0 else intervalo
+        guardarEnDisco() // <<-- persistir
         return true
     }
 
+    @Synchronized
+    fun cargarDesdeDisco() {
+        try {
+            if (!Files.exists(dataFile)) return
+            val props = Properties().apply {
+                Files.newInputStream(dataFile).use { load(it) }
+            }
+            tareas.clear()
+            val count = props.getProperty("tareas.count")?.toIntOrNull() ?: 0
+            var maxId = 0
+            for (i in 1..count) {
+                val id = props.getProperty("tarea.$i.id")?.toIntOrNull() ?: continue
+                val nombre = props.getProperty("tarea.$i.nombre") ?: continue
+                val comando = props.getProperty("tarea.$i.comando") ?: continue
+                val intervalo = props.getProperty("tarea.$i.intervalo")?.toLongOrNull() ?: 0L
+                val t = Tarea(id, nombre, comando, intervalo)
+                tareas[id] = t
+                if (id > maxId) maxId = id
+            }
+            contadorId = maxId
+        } catch (_: Exception) {
+            // Silencioso para no romper la app si el archivo está dañado
+        }
+    }
+
+    @Synchronized
+    private fun guardarEnDisco() {
+        try {
+            Files.createDirectories(baseDir)
+            val props = Properties()
+            val list = tareas.values.sortedBy { it.id }
+            props["tareas.count"] = list.size.toString()
+            list.forEachIndexed { idx, t ->
+                val i = idx + 1
+                props["tarea.$i.id"] = t.id.toString()
+                props["tarea.$i.nombre"] = t.nombre
+                props["tarea.$i.comando"] = t.comando
+                props["tarea.$i.intervalo"] = t.intervalo.toString()
+            }
+            Files.newOutputStream(dataFile).use { props.store(it, "Tareas PSP") }
+        } catch (_: Exception) {}
+    }
 }
