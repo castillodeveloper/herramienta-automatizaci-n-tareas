@@ -12,6 +12,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.time.format.DateTimeFormatter
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 
 // Formato de hora para "Última ejecución"
 private val HHMMSS: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -80,7 +86,7 @@ fun App() {
                     }
                 }) { Text("Añadir") }
 
-                // ⬇️ Toggle Iniciar/Detener programador
+                // Toggle Iniciar/Detener programador
                 Button(onClick = {
                     if (programadorActivo) {
                         GestorTareas.detenerProgramador()
@@ -128,11 +134,19 @@ private fun TareaRow(t: Tarea) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            val ultima = t.ultimaEjecucion?.format(HHMMSS) ?: "-"
-            Text(
-                "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | estado: ${t.estado}",
-                modifier = Modifier.weight(1f)
-            )
+            // Texto descriptivo + pill de estado a la derecha
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val ultima = t.ultimaEjecucion?.format(HHMMSS) ?: "-"
+                Text(
+                    "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | ",
+                    modifier = Modifier.padding(end = 6.dp)
+                )
+                EstadoPill(t.estado)
+            }
+
             Button(
                 onClick = { GestorTareas.ejecutarTarea(t.id) },
                 enabled = t.estado != EstadoTarea.EJECUTANDO
@@ -229,4 +243,25 @@ private fun TareaRow(t: Tarea) {
             )
         }
     }
+}
+
+/** Pill de color para el estado de la tarea */
+@Composable
+private fun EstadoPill(estado: EstadoTarea) {
+    val (bg, fg) = when (estado) {
+        EstadoTarea.PENDIENTE   -> Color(0xFFE3F2FD) to Color(0xFF0D47A1)  // azul claro
+        EstadoTarea.EJECUTANDO  -> Color(0xFFFFF3E0) to Color(0xFFE65100)  // naranja
+        EstadoTarea.FINALIZADA  -> Color(0xFFE8F5E9) to Color(0xFF1B5E20)  // verde
+        EstadoTarea.ERROR       -> Color(0xFFFFEBEE) to Color(0xFFB71C1C)  // rojo
+    }
+    Text(
+        text = estado.name,
+        color = fg,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    )
 }
