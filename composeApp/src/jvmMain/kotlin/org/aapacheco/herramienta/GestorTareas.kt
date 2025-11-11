@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.Properties
+import kotlin.coroutines.coroutineContext
 
 /**
  * Gestiona la lista de tareas y sus ejecuciones concurrentes.
@@ -18,6 +19,9 @@ object GestorTareas {
     private val tareas = ConcurrentHashMap<Int, Tarea>()
     private var contadorId = 0
     private var programadorJob: Job? = null
+
+    // Mapa de ejecuciones activas: id -> (proceso, job)
+    private val procesosActivos = ConcurrentHashMap<Int, Pair<Process, Job>>()
 
     // ===== Persistencia simple en .properties =====
     private val baseDir: Path = Paths.get(System.getProperty("user.home"), "HerramientaAutomatizacion")
@@ -37,19 +41,25 @@ object GestorTareas {
     fun agregarTarea(nombre: String, comando: String, intervalo: Long = 0): Tarea {
         val tarea = Tarea(++contadorId, nombre, comando, intervalo)
         tareas[tarea.id] = tarea
-        guardarEnDisco()                 // guarda tras añadir
+        guardarEnDisco()
         return tarea
     }
 
     /** Ejecuta una tarea concreta por ID. */
     fun ejecutarTarea(id: Int) {
         val tarea = tareas[id] ?: return
+        // Evita solapar ejecuciones de la misma tarea
+        if (tarea.estado == EstadoTarea.EJECUTANDO || procesosActivos.containsKey(id)) return
+
         tarea.estado = EstadoTarea.EJECUTANDO
 
-        // Corrutina para no bloquear la interfaz
         GlobalScope.launch(Dispatchers.IO) {
             try {
                 val proceso = buildProceso(tarea.comando).start()
+
+                // Job de esta corrutina (no nulo dentro de una corrutina)
+                val job = coroutineContext[Job]!!
+                procesosActivos[id] = proceso to job
 
                 val salida = BufferedReader(InputStreamReader(proceso.inputStream)).readText()
                 val codigoSalida = proceso.waitFor()
@@ -68,11 +78,27 @@ object GestorTareas {
                 tarea.error = e.message ?: "Error desconocido"
                 tarea.ultimaEjecucion = LocalDateTime.now()
             } finally {
-                // Guardar log SIEMPRE (éxito o error) y persistir estado básico
+                procesosActivos.remove(id)
                 try { LogFiles.escribirLogEjecucion(tarea) } catch (_: Exception) {}
-                guardarEnDisco()          // guarda al terminar ejecución
+                guardarEnDisco()
             }
         }
+    }
+
+    /** Cancela la ejecución en curso de una tarea (si la hay). */
+    fun cancelarEjecucion(id: Int): Boolean {
+        val par = procesosActivos.remove(id) ?: return false
+        val (proc, job) = par
+        try { proc.destroy() } catch (_: Exception) {}
+        try { job.cancel() } catch (_: Exception) {}
+
+        tareas[id]?.apply {
+            estado = EstadoTarea.PENDIENTE
+            error = "Ejecución cancelada por el usuario"
+            ultimaEjecucion = LocalDateTime.now()
+        }
+        guardarEnDisco()
+        return true
     }
 
     /** Devuelve la lista de tareas registradas. */
@@ -80,14 +106,13 @@ object GestorTareas {
 
     /** Elimina una tarea del gestor. */
     fun eliminarTarea(id: Int) {
+        // Si está ejecutándose, la cancelamos primero
+        if (procesosActivos.containsKey(id)) cancelarEjecucion(id)
         tareas.remove(id)
-        guardarEnDisco()                 // guarda tras borrar
+        guardarEnDisco()
     }
 
-    /**
-     * Inicia un bucle que revisa periódicamente todas las tareas
-     * con intervalo > 0 y las ejecuta automáticamente.
-     */
+    /** Inicia el programador periódico. */
     fun iniciarProgramador() {
         if (programadorJob?.isActive == true) return
         programadorJob = GlobalScope.launch(Dispatchers.IO) {
@@ -120,7 +145,7 @@ object GestorTareas {
         t.nombre = nombre
         t.comando = comando
         t.intervalo = if (intervalo < 0) 0 else intervalo
-        guardarEnDisco()                 // guarda tras editar
+        guardarEnDisco()
         return true
     }
 

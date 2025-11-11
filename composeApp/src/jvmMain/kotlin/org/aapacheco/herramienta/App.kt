@@ -168,6 +168,7 @@ private fun TareaRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
+            // Descripción + pill de estado
             Row(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically
@@ -175,11 +176,14 @@ private fun TareaRow(
                 val ultima = t.ultimaEjecucion?.format(HHMMSS) ?: "-"
                 Text(
                     "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | ",
-                    modifier = Modifier.padding(end = 6.dp)
+                    modifier = Modifier.padding(end = 6.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 EstadoPill(t.estado)
             }
 
+            // Ejecutar (deshabilitado si ya está ejecutando)
             Button(
                 onClick = {
                     GestorTareas.ejecutarTarea(t.id)
@@ -187,6 +191,14 @@ private fun TareaRow(
                 },
                 enabled = t.estado != EstadoTarea.EJECUTANDO
             ) { Text("Ejecutar") }
+
+            // NUEVO: Cancelar (solo visible cuando está ejecutando)
+            if (t.estado == EstadoTarea.EJECUTANDO) {
+                OutlinedButton(onClick = {
+                    val ok = GestorTareas.cancelarEjecucion(t.id)
+                    onInfo(if (ok) "Ejecución cancelada (#${t.id})" else "No hay ejecución activa")
+                }) { Text("Cancelar") }
+            }
 
             OutlinedButton(onClick = { verLog = true }) { Text("Ver log") }
             OutlinedButton(onClick = {
@@ -287,6 +299,7 @@ private fun TareaRow(
         }
     }
 }
+
 
 /** Pill de color para el estado de la tarea */
 @Composable
