@@ -23,20 +23,25 @@ object GestorTareas {
     private val baseDir: Path = Paths.get(System.getProperty("user.home"), "HerramientaAutomatizacion")
     private val dataFile: Path = baseDir.resolve("tareas.properties")
 
-    /**
-     * Agrega una nueva tarea al gestor.
-     */
+    /** Helper: ProcessBuilder según SO (Windows vs Unix). */
+    private fun buildProceso(comando: String): ProcessBuilder {
+        val os = System.getProperty("os.name").lowercase()
+        return if (os.contains("win")) {
+            ProcessBuilder("cmd", "/c", comando)
+        } else {
+            ProcessBuilder("bash", "-lc", comando)
+        }.redirectErrorStream(true)
+    }
+
+    /** Agrega una nueva tarea al gestor. */
     fun agregarTarea(nombre: String, comando: String, intervalo: Long = 0): Tarea {
         val tarea = Tarea(++contadorId, nombre, comando, intervalo)
         tareas[tarea.id] = tarea
-        guardarEnDisco()                 // ← guarda tras añadir
+        guardarEnDisco()                 // guarda tras añadir
         return tarea
     }
 
-
-    /**
-     * Ejecuta una tarea concreta por ID, usando ProcessBuilder.
-     */
+    /** Ejecuta una tarea concreta por ID. */
     fun ejecutarTarea(id: Int) {
         val tarea = tareas[id] ?: return
         tarea.estado = EstadoTarea.EJECUTANDO
@@ -44,9 +49,7 @@ object GestorTareas {
         // Corrutina para no bloquear la interfaz
         GlobalScope.launch(Dispatchers.IO) {
             try {
-                val proceso = ProcessBuilder("cmd", "/c", tarea.comando)
-                    .redirectErrorStream(true)
-                    .start()
+                val proceso = buildProceso(tarea.comando).start()
 
                 val salida = BufferedReader(InputStreamReader(proceso.inputStream)).readText()
                 val codigoSalida = proceso.waitFor()
@@ -54,20 +57,20 @@ object GestorTareas {
                 tarea.salida = salida
                 tarea.ultimaEjecucion = LocalDateTime.now()
 
-                if (codigoSalida == 0) {
-                    tarea.estado = EstadoTarea.FINALIZADA
+                tarea.estado = if (codigoSalida == 0) {
+                    EstadoTarea.FINALIZADA
                 } else {
-                    tarea.estado = EstadoTarea.ERROR
                     tarea.error = "Código de salida: $codigoSalida"
+                    EstadoTarea.ERROR
                 }
             } catch (e: Exception) {
-                // Si falla la ejecución, marcamos ERROR y registramos hora también
                 tarea.estado = EstadoTarea.ERROR
                 tarea.error = e.message ?: "Error desconocido"
                 tarea.ultimaEjecucion = LocalDateTime.now()
             } finally {
-                // Guardar log SIEMPRE (éxito o error). Ignoramos cualquier fallo al escribir.
+                // Guardar log SIEMPRE (éxito o error) y persistir estado básico
                 try { LogFiles.escribirLogEjecucion(tarea) } catch (_: Exception) {}
+                guardarEnDisco()          // guarda al terminar ejecución
             }
         }
     }
@@ -78,9 +81,8 @@ object GestorTareas {
     /** Elimina una tarea del gestor. */
     fun eliminarTarea(id: Int) {
         tareas.remove(id)
-        guardarEnDisco()                 // ← guarda tras borrar
+        guardarEnDisco()                 // guarda tras borrar
     }
-
 
     /**
      * Inicia un bucle que revisa periódicamente todas las tareas
@@ -118,10 +120,9 @@ object GestorTareas {
         t.nombre = nombre
         t.comando = comando
         t.intervalo = if (intervalo < 0) 0 else intervalo
-        guardarEnDisco()                 // ← guarda tras editar
+        guardarEnDisco()                 // guarda tras editar
         return true
     }
-
 
     @Synchronized
     fun cargarDesdeDisco() {
