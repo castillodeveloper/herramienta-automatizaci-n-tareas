@@ -9,6 +9,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -17,11 +19,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
 
-// Formato de hora para "Última ejecución"
 private val HHMMSS: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 @Composable
@@ -30,22 +30,17 @@ fun App() {
         val snackbarHostState = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
 
-        var nombre by remember { mutableStateOf("") }
-        var comando by remember { mutableStateOf("") }
-        var intervaloTxt by remember { mutableStateOf("0") }
-        var programadorActivo by remember { mutableStateOf(false) }
+        var nombre by rememberSaveable { mutableStateOf("") }
+        var comando by rememberSaveable { mutableStateOf("") }
+        var intervaloTxt by rememberSaveable { mutableStateOf("0") }
+        var programadorActivo by rememberSaveable { mutableStateOf(false) }
 
-        var tareas by remember { mutableStateOf(listOf<Tarea>()) }
-        LaunchedEffect(Unit) {
-            GestorTareas.cargarDesdeDisco()
-            while (true) {
-                tareas = GestorTareas.listarTareas()
-                delay(500)
-            }
-        }
+        // Observa snapshots inmutables
+        val tareas by GestorTareas.estadoTareas.collectAsState()
+
+        LaunchedEffect(Unit) { GestorTareas.cargarDesdeDisco() }
 
         Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
-            // Contenedor CENTRADO y FIJO (ancho constante)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -54,47 +49,33 @@ fun App() {
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // ancho fijo del contenido
                 Column(
                     modifier = Modifier.width(980.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        "Herramienta de Automatización de Tareas",
-                        style = MaterialTheme.typography.h6
-                    )
+                    Text("Herramienta de Automatización de Tareas", style = MaterialTheme.typography.h6)
 
-                    // --- FILA FIJA DE CONTROLES SUPERIORES ---
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedTextField(
-                            value = nombre,
-                            onValueChange = { nombre = it },
-                            label = { Text("Nombre") },
-                            singleLine = true,
+                            value = nombre, onValueChange = { nombre = it },
+                            label = { Text("Nombre") }, singleLine = true,
                             modifier = Modifier.width(240.dp)
                         )
-
                         OutlinedTextField(
-                            value = comando,
-                            onValueChange = { comando = it },
-                            label = { Text("Comando") },                 // label corto
-                            placeholder = { Text("p. ej.  dir    /    echo Hola") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)               // ocupa el resto
+                            value = comando, onValueChange = { comando = it },
+                            label = { Text("Comando") },
+                            placeholder = { Text("p. ej.  dir   /   echo Hola") },
+                            singleLine = true, modifier = Modifier.weight(1f)
                         )
-
                         OutlinedTextField(
-                            value = intervaloTxt,
-                            onValueChange = { intervaloTxt = it.filter(Char::isDigit) },
-                            label = { Text("Intervalo (s)") },
-                            singleLine = true,
+                            value = intervaloTxt, onValueChange = { intervaloTxt = it.filter(Char::isDigit) },
+                            label = { Text("Intervalo (s)") }, singleLine = true,
                             modifier = Modifier.width(140.dp)
                         )
-
                         Button(onClick = {
                             val n = nombre.trim()
                             val c = comando.trim()
@@ -125,13 +106,20 @@ fun App() {
                         }
                     }
 
+                    // Aviso si parece comando "infinito" y el intervalo es 0
+                    val intervaloL = intervaloTxt.toLongOrNull() ?: 0L
+                    if (comando.isNotBlank() && GestorTareas.requiereIntervalo(comando) && intervaloL == 0L) {
+                        Text(
+                            "Este comando suele no terminar. Indica un intervalo > 0 para evitar que quede colgado.",
+                            color = Color(0xFFE65100),
+                            modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp)
+                        )
+                    }
+
                     Divider()
 
-                    // --- LISTA DE TAREAS ---
                     LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
+                        modifier = Modifier.fillMaxWidth().weight(1f),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(tareas, key = { it.id }) { t ->
@@ -149,7 +137,7 @@ fun App() {
 
 @Composable
 private fun TareaRow(
-    t: Tarea,
+    t: TareaUI,
     onInfo: (String) -> Unit
 ) {
     var verLog by remember { mutableStateOf(false) }
@@ -165,29 +153,19 @@ private fun TareaRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Texto DESCRIPCIÓN (ocupa el espacio disponible) + pill (no se parte)
             val ultima = t.ultimaEjecucion?.format(HHMMSS) ?: "-"
             Text(
                 "${t.id}. ${t.nombre} | cmd: '${t.comando}' | cada ${t.intervalo}s | última: $ultima | ",
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 8.dp)
+                maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(end = 8.dp)
             )
             EstadoPill(t.estado)
 
-            // Ejecutar (deshabilitado si ya está ejecutando)
             Button(
-                onClick = {
-                    GestorTareas.ejecutarTarea(t.id)
-                    onInfo("Ejecución lanzada: ${t.nombre}")
-                },
+                onClick = { GestorTareas.ejecutarTarea(t.id); onInfo("Ejecución lanzada: ${t.nombre}") },
                 enabled = t.estado != EstadoTarea.EJECUTANDO
             ) { Text("Ejecutar") }
 
-            // Cancelar solo cuando está ejecutando
             if (t.estado == EstadoTarea.EJECUTANDO) {
                 OutlinedButton(onClick = {
                     val ok = GestorTareas.cancelarEjecucion(t.id)
@@ -197,10 +175,7 @@ private fun TareaRow(
 
             OutlinedButton(onClick = { verLog = true }) { Text("Ver log") }
             OutlinedButton(onClick = {
-                editNombre = t.nombre
-                editComando = t.comando
-                editIntervalo = t.intervalo.toString()
-                editOpen = true
+                editNombre = t.nombre; editComando = t.comando; editIntervalo = t.intervalo.toString(); editOpen = true
             }) { Text("Editar") }
             OutlinedButton(onClick = { confirmDelete = true }) { Text("Eliminar") }
         }
@@ -210,12 +185,7 @@ private fun TareaRow(
                 onDismissRequest = { verLog = false },
                 title = { Text("Salida de: ${t.nombre}") },
                 text = {
-                    Box(
-                        modifier = Modifier
-                            .width(700.dp)
-                            .height(300.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
+                    Box(Modifier.width(700.dp).height(300.dp).verticalScroll(rememberScrollState())) {
                         val texto = buildString {
                             if (t.salida.isNotBlank()) append(t.salida)
                             if (t.error.isNotBlank()) {
@@ -240,32 +210,20 @@ private fun TareaRow(
                 title = { Text("Editar tarea #${t.id}") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(editNombre, { editNombre = it }, label = { Text("Nombre") }, singleLine = true)
+                        OutlinedTextField(editComando, { editComando = it }, label = { Text("Comando o script") }, singleLine = true)
                         OutlinedTextField(
-                            value = editNombre, onValueChange = { editNombre = it },
-                            label = { Text("Nombre") }, singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = editComando, onValueChange = { editComando = it },
-                            label = { Text("Comando o script") }, singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = editIntervalo,
-                            onValueChange = { editIntervalo = it.filter(Char::isDigit) },
+                            editIntervalo, { editIntervalo = it.filter(Char::isDigit) },
                             label = { Text("Intervalo (s)") }, singleLine = true
                         )
-                        if (!valido) {
-                            Text("Completa todos los campos (intervalo ≥ 0).", color = MaterialTheme.colors.error)
-                        }
+                        if (!valido) Text("Completa todos los campos (intervalo ≥ 0).", color = MaterialTheme.colors.error)
                     }
                 },
                 confirmButton = {
                     TextButton(
                         onClick = {
                             GestorTareas.actualizarTarea(
-                                t.id,
-                                editNombre.trim(),
-                                editComando.trim(),
-                                (editIntervalo.toLongOrNull() ?: 0L)
+                                t.id, editNombre.trim(), editComando.trim(), (editIntervalo.toLongOrNull() ?: 0L)
                             )
                             editOpen = false
                             onInfo("Tarea actualizada: ${t.id}")
@@ -295,14 +253,13 @@ private fun TareaRow(
     }
 }
 
-/** Pill de color para el estado de la tarea */
 @Composable
 private fun EstadoPill(estado: EstadoTarea) {
     val (bg, fg) = when (estado) {
-        EstadoTarea.PENDIENTE   -> Color(0xFFE3F2FD) to Color(0xFF0D47A1)  // azul claro
-        EstadoTarea.EJECUTANDO  -> Color(0xFFFFF3E0) to Color(0xFFE65100)  // naranja
-        EstadoTarea.FINALIZADA  -> Color(0xFFE8F5E9) to Color(0xFF1B5E20)  // verde
-        EstadoTarea.ERROR       -> Color(0xFFFFEBEE) to Color(0xFFB71C1C)  // rojo
+        EstadoTarea.PENDIENTE   -> Color(0xFFE3F2FD) to Color(0xFF0D47A1)
+        EstadoTarea.EJECUTANDO  -> Color(0xFFFFF3E0) to Color(0xFFE65100)
+        EstadoTarea.FINALIZADA  -> Color(0xFFE8F5E9) to Color(0xFF1B5E20)
+        EstadoTarea.ERROR       -> Color(0xFFFFEBEE) to Color(0xFFB71C1C)
     }
     Text(
         text = estado.name,

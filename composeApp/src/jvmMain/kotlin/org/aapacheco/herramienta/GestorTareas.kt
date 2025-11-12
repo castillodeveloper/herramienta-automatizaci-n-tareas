@@ -1,20 +1,35 @@
 package org.aapacheco.herramienta
 
 import kotlinx.coroutines.*
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.Properties
-import kotlin.coroutines.coroutineContext
 
-/**
- * Gestiona la lista de tareas y sus ejecuciones concurrentes.
- */
+// ===== DTO inmutable para la UI =====
+data class TareaUI(
+    val id: Int,
+    val nombre: String,
+    val comando: String,
+    val intervalo: Long,
+    val estado: EstadoTarea,
+    val ultimaEjecucion: LocalDateTime?,
+    val salida: String,
+    val error: String
+)
+
+/** Gestiona la lista de tareas y sus ejecuciones concurrentes. */
 object GestorTareas {
+
+    // ================== Estado y alcance de corutinas ==================
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val tareas = ConcurrentHashMap<Int, Tarea>()
     private var contadorId = 0
@@ -27,51 +42,121 @@ object GestorTareas {
     private val baseDir: Path = Paths.get(System.getProperty("user.home"), "HerramientaAutomatizacion")
     private val dataFile: Path = baseDir.resolve("tareas.properties")
 
-    /** Helper: ProcessBuilder según SO (Windows vs Unix). */
-    private fun buildProceso(comando: String): ProcessBuilder {
-        val os = System.getProperty("os.name").lowercase()
-        return if (os.contains("win")) {
-            ProcessBuilder("cmd", "/c", comando)
-        } else {
-            ProcessBuilder("bash", "-lc", comando)
-        }.redirectErrorStream(true)
+    // ======= Estado para la UI (snapshots inmutables) =======
+    private val _estadoTareas = MutableStateFlow<List<TareaUI>>(emptyList())
+    val estadoTareas: StateFlow<List<TareaUI>> = _estadoTareas.asStateFlow()
+
+    private fun Tarea.toUI(): TareaUI = TareaUI(
+        id = id,
+        nombre = nombre,
+        comando = comando,
+        intervalo = intervalo,
+        estado = estado,
+        ultimaEjecucion = ultimaEjecucion,
+        salida = salida,
+        error = error
+    )
+
+    private fun emitir() {
+        _estadoTareas.value = tareas.values.sortedBy { it.id }.map { it.toUI() }
     }
 
-    /** Agrega una nueva tarea al gestor. */
+    // Hook de cierre limpio
+    init {
+        try { Runtime.getRuntime().addShutdownHook(Thread { cancelAll() }) } catch (_: Exception) {}
+    }
+
+    // ================== Utilidades SO y validación ==================
+    private val isWindows = System.getProperty("os.name").lowercase().contains("win")
+
+    /** Helper: ProcessBuilder según SO (Windows vs Unix). */
+    private fun buildProceso(comando: String): ProcessBuilder =
+        if (isWindows) ProcessBuilder("cmd", "/c", comando) else ProcessBuilder("bash", "-lc", comando)
+            .redirectErrorStream(true)
+
+    /** Mata el árbol de procesos (padre + hijos). */
+    private fun killProcessTree(proc: Process) {
+        try {
+            val pid = proc.pid()
+            if (isWindows) {
+                // /T mata el árbol; /F fuerza
+                ProcessBuilder("cmd", "/c", "taskkill /PID $pid /T /F")
+                    .redirectErrorStream(true).start().waitFor()
+            } else {
+                // Intento amable + forzado
+                ProcessBuilder("bash", "-lc", "pkill -TERM -P $pid || true")
+                    .redirectErrorStream(true).start().waitFor()
+                ProcessBuilder("bash", "-lc", "kill -TERM $pid || true")
+                    .redirectErrorStream(true).start().waitFor()
+                Thread.sleep(200)
+                ProcessBuilder("bash", "-lc", "pkill -KILL -P $pid || true")
+                    .redirectErrorStream(true).start().waitFor()
+                ProcessBuilder("bash", "-lc", "kill -KILL $pid || true")
+                    .redirectErrorStream(true).start().waitFor()
+            }
+        } catch (_: Exception) {
+            try { proc.destroy() } catch (_: Exception) {}
+            try { proc.destroyForcibly() } catch (_: Exception) {}
+        }
+    }
+
+    /** Heurística: ¿es un comando que tiende a no terminar si no se limita? */
+    fun requiereIntervalo(comando: String): Boolean {
+        val c = comando.trim().lowercase()
+        if (c.startsWith("ping")) {
+            return if (isWindows) c.contains(" -t") && !c.contains(" -n ")
+            else !c.contains(" -c ")
+        }
+        return c.startsWith("tail -f") || c.startsWith("watch ")
+                || c == "top" || c == "htop" || c.startsWith("yes")
+    }
+
+    // ================== API ==================
     fun agregarTarea(nombre: String, comando: String, intervalo: Long = 0): Tarea {
-        val tarea = Tarea(++contadorId, nombre, comando, intervalo)
+        val tarea = Tarea(++contadorId, nombre, comando, if (intervalo < 0) 0 else intervalo)
         tareas[tarea.id] = tarea
-        guardarEnDisco()
+        guardarEnDisco(); emitir()
         return tarea
     }
 
-    /** Ejecuta una tarea concreta por ID. */
+    /** Ejecuta una tarea concreta por ID con salida en streaming y sin solapar. */
     fun ejecutarTarea(id: Int) {
         val tarea = tareas[id] ?: return
-        // Evita solapar ejecuciones de la misma tarea
         if (tarea.estado == EstadoTarea.EJECUTANDO || procesosActivos.containsKey(id)) return
 
+        // Reset y marcamos en curso
         tarea.estado = EstadoTarea.EJECUTANDO
+        tarea.error = ""
+        tarea.salida = ""
+        emitir()
 
-        GlobalScope.launch(Dispatchers.IO) {
+        appScope.launch {
+            var proceso: Process? = null
             try {
-                val proceso = buildProceso(tarea.comando).start()
+                proceso = buildProceso(tarea.comando).start()
 
-                // Job de esta corrutina (no nulo dentro de una corrutina)
-                val job = coroutineContext[Job]!!
+                // Registrar ejecución activa (job correcto)
+                val job: Job = currentCoroutineContext().job
                 procesosActivos[id] = proceso to job
 
-                val salida = BufferedReader(InputStreamReader(proceso.inputStream)).readText()
-                val codigoSalida = proceso.waitFor()
+                // STREAMING: leer línea a línea y publicar a la UI
+                proceso.inputStream.bufferedReader().use { reader ->
+                    val sb = StringBuilder()
+                    while (isActive) {
+                        val line = reader.readLine() ?: break
+                        if (sb.isNotEmpty()) sb.append('\n')
+                        sb.append(line)
+                        tarea.salida = sb.toString()
+                        emitir()
+                    }
+                }
 
-                tarea.salida = salida
+                val code = proceso.waitFor()
                 tarea.ultimaEjecucion = LocalDateTime.now()
 
-                tarea.estado = if (codigoSalida == 0) {
-                    EstadoTarea.FINALIZADA
-                } else {
-                    tarea.error = "Código de salida: $codigoSalida"
-                    EstadoTarea.ERROR
+                if (tarea.estado == EstadoTarea.EJECUTANDO) {
+                    tarea.estado = if (code == 0) EstadoTarea.FINALIZADA else EstadoTarea.ERROR
+                    if (code != 0) tarea.error = "Código de salida: $code"
                 }
             } catch (e: Exception) {
                 tarea.estado = EstadoTarea.ERROR
@@ -80,7 +165,10 @@ object GestorTareas {
             } finally {
                 procesosActivos.remove(id)
                 try { LogFiles.escribirLogEjecucion(tarea) } catch (_: Exception) {}
-                guardarEnDisco()
+                try {
+                    if (proceso != null && proceso.isAlive) killProcessTree(proceso)
+                } catch (_: Exception) {}
+                guardarEnDisco(); emitir()
             }
         }
     }
@@ -89,7 +177,8 @@ object GestorTareas {
     fun cancelarEjecucion(id: Int): Boolean {
         val par = procesosActivos.remove(id) ?: return false
         val (proc, job) = par
-        try { proc.destroy() } catch (_: Exception) {}
+        // Primero matamos el árbol del proceso; luego cancelamos la corutina lectora
+        try { killProcessTree(proc) } catch (_: Exception) {}
         try { job.cancel() } catch (_: Exception) {}
 
         tareas[id]?.apply {
@@ -97,36 +186,27 @@ object GestorTareas {
             error = "Ejecución cancelada por el usuario"
             ultimaEjecucion = LocalDateTime.now()
         }
-        guardarEnDisco()
+        guardarEnDisco(); emitir()
         return true
     }
 
-    /** Devuelve la lista de tareas registradas. */
-    fun listarTareas(): List<Tarea> = tareas.values.toList()
-
-    /** Elimina una tarea del gestor. */
     fun eliminarTarea(id: Int) {
-        // Si está ejecutándose, la cancelamos primero
         if (procesosActivos.containsKey(id)) cancelarEjecucion(id)
         tareas.remove(id)
-        guardarEnDisco()
+        guardarEnDisco(); emitir()
     }
 
-    /** Inicia el programador periódico. */
     fun iniciarProgramador() {
         if (programadorJob?.isActive == true) return
-        programadorJob = GlobalScope.launch(Dispatchers.IO) {
-            while (true) {
+        programadorJob = appScope.launch {
+            while (isActive) {
                 val ahora = LocalDateTime.now()
                 tareas.values.forEach { tarea ->
                     if (tarea.intervalo > 0) {
                         val ultima = tarea.ultimaEjecucion
                         val trans = ultima?.let { java.time.Duration.between(it, ahora).seconds } ?: Long.MAX_VALUE
                         val puede = (tarea.estado != EstadoTarea.EJECUTANDO) && (trans >= tarea.intervalo)
-                        if (puede) {
-                            println("⏰ Ejecutando tarea automática: ${tarea.nombre}")
-                            ejecutarTarea(tarea.id)
-                        }
+                        if (puede) ejecutarTarea(tarea.id)
                     }
                 }
                 delay(1000)
@@ -139,13 +219,12 @@ object GestorTareas {
         programadorJob = null
     }
 
-    /** Actualiza una tarea existente. Devuelve true si se modificó. */
     fun actualizarTarea(id: Int, nombre: String, comando: String, intervalo: Long): Boolean {
         val t = tareas[id] ?: return false
         t.nombre = nombre
         t.comando = comando
         t.intervalo = if (intervalo < 0) 0 else intervalo
-        guardarEnDisco()
+        guardarEnDisco(); emitir()
         return true
     }
 
@@ -153,9 +232,7 @@ object GestorTareas {
     fun cargarDesdeDisco() {
         try {
             if (!Files.exists(dataFile)) return
-            val props = Properties().apply {
-                Files.newInputStream(dataFile).use { load(it) }
-            }
+            val props = Properties().apply { Files.newInputStream(dataFile).use { load(it) } }
             tareas.clear()
             val count = props.getProperty("tareas.count")?.toIntOrNull() ?: 0
             var maxId = 0
@@ -169,9 +246,8 @@ object GestorTareas {
                 if (id > maxId) maxId = id
             }
             contadorId = maxId
-        } catch (_: Exception) {
-            // Silencioso para no romper la app si el archivo está dañado
-        }
+            emitir()
+        } catch (_: Exception) { /* no-op */ }
     }
 
     @Synchronized
@@ -190,5 +266,19 @@ object GestorTareas {
             }
             Files.newOutputStream(dataFile).use { props.store(it, "Tareas PSP") }
         } catch (_: Exception) {}
+    }
+
+    /** Cierre limpio global. */
+    fun cancelAll() {
+        try { programadorJob?.cancel() } catch (_: Exception) {}
+        programadorJob = null
+
+        procesosActivos.values.forEach { (proc, job) ->
+            try { killProcessTree(proc) } catch (_: Exception) {}
+            try { job.cancel() } catch (_: Exception) {}
+        }
+        procesosActivos.clear()
+
+        try { appScope.cancel() } catch (_: Exception) {}
     }
 }
