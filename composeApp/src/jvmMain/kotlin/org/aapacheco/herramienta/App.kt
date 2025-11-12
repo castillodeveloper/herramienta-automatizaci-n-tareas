@@ -145,6 +145,7 @@ private fun TareaRow(
     var editNombre by remember { mutableStateOf(t.nombre) }
     var editComando by remember { mutableStateOf(t.comando) }
     var editIntervalo by remember { mutableStateOf(t.intervalo.toString()) }
+    var editTimeout by remember { mutableStateOf(t.timeoutS.toString()) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
@@ -161,9 +162,18 @@ private fun TareaRow(
             )
             EstadoPill(t.estado)
 
+            // Habilitada (afecta botón y scheduler)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Habilitada", fontSize = 12.sp, modifier = Modifier.padding(end = 6.dp))
+                Switch(
+                    checked = t.habilitada,
+                    onCheckedChange = { GestorTareas.actualizarHabilitada(t.id, it) }
+                )
+            }
+
             Button(
                 onClick = { GestorTareas.ejecutarTarea(t.id); onInfo("Ejecución lanzada: ${t.nombre}") },
-                enabled = t.estado != EstadoTarea.EJECUTANDO
+                enabled = t.estado != EstadoTarea.EJECUTANDO && t.habilitada
             ) { Text("Ejecutar") }
 
             if (t.estado == EstadoTarea.EJECUTANDO) {
@@ -175,8 +185,16 @@ private fun TareaRow(
 
             OutlinedButton(onClick = { verLog = true }) { Text("Ver log") }
             OutlinedButton(onClick = {
-                editNombre = t.nombre; editComando = t.comando; editIntervalo = t.intervalo.toString(); editOpen = true
+                editNombre = t.nombre
+                editComando = t.comando
+                editIntervalo = t.intervalo.toString()
+                editTimeout = t.timeoutS.toString()
+                editOpen = true
             }) { Text("Editar") }
+            OutlinedButton(onClick = {
+                GestorTareas.duplicarTarea(t.id)
+                onInfo("Tarea duplicada")
+            }) { Text("Duplicar") }
             OutlinedButton(onClick = { confirmDelete = true }) { Text("Eliminar") }
         }
 
@@ -203,7 +221,8 @@ private fun TareaRow(
 
         if (editOpen) {
             val intervaloVal = editIntervalo.toLongOrNull() ?: -1
-            val valido = editNombre.isNotBlank() && editComando.isNotBlank() && intervaloVal >= 0
+            val timeoutVal = editTimeout.toLongOrNull() ?: -1
+            val valido = editNombre.isNotBlank() && editComando.isNotBlank() && intervaloVal >= 0 && timeoutVal >= 0
 
             AlertDialog(
                 onDismissRequest = { editOpen = false },
@@ -212,11 +231,17 @@ private fun TareaRow(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(editNombre, { editNombre = it }, label = { Text("Nombre") }, singleLine = true)
                         OutlinedTextField(editComando, { editComando = it }, label = { Text("Comando o script") }, singleLine = true)
-                        OutlinedTextField(
-                            editIntervalo, { editIntervalo = it.filter(Char::isDigit) },
-                            label = { Text("Intervalo (s)") }, singleLine = true
-                        )
-                        if (!valido) Text("Completa todos los campos (intervalo ≥ 0).", color = MaterialTheme.colors.error)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                editIntervalo, { editIntervalo = it.filter(Char::isDigit) },
+                                label = { Text("Intervalo (s)") }, singleLine = true, modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                editTimeout, { editTimeout = it.filter(Char::isDigit) },
+                                label = { Text("Timeout (s) 0=sin límite") }, singleLine = true, modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (!valido) Text("Completa todos los campos (valores ≥ 0).", color = MaterialTheme.colors.error)
                     }
                 },
                 confirmButton = {
@@ -225,6 +250,7 @@ private fun TareaRow(
                             GestorTareas.actualizarTarea(
                                 t.id, editNombre.trim(), editComando.trim(), (editIntervalo.toLongOrNull() ?: 0L)
                             )
+                            GestorTareas.actualizarTimeout(t.id, (editTimeout.toLongOrNull() ?: 0L))
                             editOpen = false
                             onInfo("Tarea actualizada: ${t.id}")
                         },
