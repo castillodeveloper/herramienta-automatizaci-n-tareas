@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
+import java.io.File
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -14,7 +15,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.Properties
 
-// ===== DTO inmutable para la UI =====
+// ===== DTO para la UI (snapshot inmutable) =====
 data class TareaUI(
     val id: Int,
     val nombre: String,
@@ -24,21 +25,22 @@ data class TareaUI(
     val ultimaEjecucion: LocalDateTime?,
     val salida: String,
     val error: String,
+    // P1 — visibles en UI
     val habilitada: Boolean,
-    val timeoutS: Long
+    val cwd: String,
+    val timeout: Long?,
+    val env: Map<String, String>
 )
 
-/**
- * Gestiona la lista de tareas y sus ejecuciones concurrentes.
- */
+/** Gestiona lista de tareas y sus ejecuciones concurrentes. */
 object GestorTareas {
 
-    // --- Config núcleo ---
-    private const val DEFAULT_TIMEOUT_S: Long = 20          // 0 = sin timeout global
-    private const val MAX_SALIDA_KB: Int = 256              // tope de salida guardada
+    // --- Config por defecto ---
+    private const val DEFAULT_TIMEOUT_S: Long = 20       // 0 = sin timeout
+    private const val MAX_SALIDA_KB: Int = 256
     private val OS_IS_WINDOWS = System.getProperty("os.name").lowercase().contains("win")
 
-    // ================== Estado y alcance de corutinas ==================
+    // ================== Estado / corutinas ==================
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val tareas = ConcurrentHashMap<Int, Tarea>()
@@ -48,15 +50,11 @@ object GestorTareas {
     // Mapa de ejecuciones activas: id -> (proceso, job)
     private val procesosActivos = ConcurrentHashMap<Int, Pair<Process, Job>>()
 
-    // Ajustes por tarea (sin tocar la clase Tarea)
-    private val enableMap  = ConcurrentHashMap<Int, Boolean>()   // por defecto true
-    private val timeoutMap = ConcurrentHashMap<Int, Long>()       // por defecto 0 (sin límite)
-
     // ===== Persistencia simple en .properties =====
     private val baseDir: Path = Paths.get(System.getProperty("user.home"), "HerramientaAutomatizacion")
     private val dataFile: Path = baseDir.resolve("tareas.properties")
 
-    // ======= Estado para la UI (snapshots inmutables) =======
+    // ======= Estado para la UI =======
     private val _estadoTareas = MutableStateFlow<List<TareaUI>>(emptyList())
     val estadoTareas: StateFlow<List<TareaUI>> = _estadoTareas.asStateFlow()
 
@@ -69,8 +67,10 @@ object GestorTareas {
         ultimaEjecucion = ultimaEjecucion,
         salida = salida,
         error = error,
-        habilitada = enableMap[id] ?: true,
-        timeoutS = timeoutMap[id] ?: 0L
+        habilitada = habilitada,
+        cwd = cwd,
+        timeout = timeout,
+        env = env.toMap()
     )
 
     private fun emitir() {
@@ -82,63 +82,69 @@ object GestorTareas {
         try { Runtime.getRuntime().addShutdownHook(Thread { cancelAll() }) } catch (_: Exception) {}
     }
 
-    // ================== Utilidades SO y validación ==================
-    private fun buildProceso(comando: String): ProcessBuilder =
-        (if (OS_IS_WINDOWS) ProcessBuilder("cmd", "/c", comando)
-        else               ProcessBuilder("bash", "-lc", comando))
-            .redirectErrorStream(true)
+    // ================== Utilidades SO ==================
+    /** Siempre con redirectErrorStream(true) para unificar stdout+stderr. */
+    private fun buildProceso(comando: String): ProcessBuilder {
+        val pb = if (OS_IS_WINDOWS) ProcessBuilder("cmd", "/c", comando)
+        else ProcessBuilder("bash", "-lc", comando)
+        return pb.redirectErrorStream(true)
+    }
 
-    /** Heurística: ¿es un comando que tiende a no terminar si no se limita? */
     fun requiereIntervalo(comando: String): Boolean {
         val c = comando.trim().lowercase()
         if (c.startsWith("ping")) {
-            return if (OS_IS_WINDOWS) c.contains(" -t") && !c.contains(" -n ")
-            else               !c.contains(" -c ")
+            return if (OS_IS_WINDOWS) c.contains(" -t") && !c.contains(" -n ") else !c.contains(" -c ")
         }
         return c.startsWith("tail -f") || c.startsWith("watch ") || c == "top" || c == "htop" || c.startsWith("yes")
     }
+
+    // ================== Helpers públicos para la UI ==================
+    /** ¿La tarea tiene un proceso activo? Úsalo para habilitar/deshabilitar “Cancelar”. */
+    fun estaEjecutando(id: Int): Boolean = procesosActivos.containsKey(id)
+
+    /** Alias legible desde la UI (por si prefieres este nombre). */
+    fun puedeCancelar(id: Int): Boolean = estaEjecutando(id)
+
+    /** Obtener un snapshot puntual de una tarea (por id). */
+    fun getTareaUI(id: Int): TareaUI? = tareas[id]?.toUI()
 
     // ================== API ==================
     fun agregarTarea(nombre: String, comando: String, intervalo: Long = 0): Tarea {
         val tarea = Tarea(++contadorId, nombre, comando, if (intervalo < 0) 0 else intervalo)
         tareas[tarea.id] = tarea
-        enableMap[tarea.id] = true
-        timeoutMap[tarea.id] = 0L
-        guardarEnDisco()
-        emitir()
+        guardarEnDisco(); emitir()
         return tarea
     }
 
-    /** Duplicar tarea conservando ajustes. */
     fun duplicarTarea(id: Int): Tarea? {
-        val t = tareas[id] ?: return null
-        val copy = agregarTarea("${t.nombre} (copia)", t.comando, t.intervalo)
-        enableMap[copy.id]  = enableMap[id] ?: true
-        timeoutMap[copy.id] = timeoutMap[id] ?: 0L
-        guardarEnDisco()
-        emitir()
-        return copy
+        val src = tareas[id] ?: return null
+        val copia = Tarea(
+            id = ++contadorId,
+            nombre = "${src.nombre} (copia)",
+            comando = src.comando,
+            intervalo = src.intervalo,
+            habilitada = src.habilitada,
+            cwd = src.cwd,
+            timeout = src.timeout,
+            env = src.env.toMutableMap()
+        )
+        tareas[copia.id] = copia
+        guardarEnDisco(); emitir()
+        return copia
     }
 
-    fun actualizarHabilitada(id: Int, habilitada: Boolean) {
-        if (!tareas.containsKey(id)) return
-        enableMap[id] = habilitada
-        guardarEnDisco()
-        emitir()
+    fun toggleHabilitada(id: Int, on: Boolean) {
+        tareas[id]?.let {
+            it.habilitada = on
+            guardarEnDisco(); emitir()
+        }
     }
 
-    fun actualizarTimeout(id: Int, timeoutS: Long) {
-        if (!tareas.containsKey(id)) return
-        timeoutMap[id] = if (timeoutS < 0) 0 else timeoutS
-        guardarEnDisco()
-        emitir()
-    }
-
-    /** Ejecuta una tarea concreta por ID con salida en streaming y sin solapar. */
+    /** Ejecuta una tarea concreta con streaming y sin solapar. */
     fun ejecutarTarea(id: Int) {
         val tarea = tareas[id] ?: return
+        if (!tarea.habilitada) return
         if (tarea.estado == EstadoTarea.EJECUTANDO || procesosActivos.containsKey(id)) return
-        if (enableMap[id] == false) return   // deshabilitada
 
         // Reset y marcamos en curso
         tarea.estado = EstadoTarea.EJECUTANDO
@@ -146,25 +152,38 @@ object GestorTareas {
         tarea.salida = ""
         emitir()
 
-        val timeoutThis = (timeoutMap[id] ?: 0L).takeIf { it > 0 } ?: DEFAULT_TIMEOUT_S
-
         appScope.launch {
             var proceso: Process? = null
             var timeoutJob: Job? = null
             try {
-                proceso = buildProceso(tarea.comando).start()
+                val pb = buildProceso(tarea.comando)
 
-                // Registrar ejecución activa para poder cancelarla
+                // Directorio de trabajo
+                if (tarea.cwd.isNotBlank()) {
+                    val dir = File(tarea.cwd)
+                    if (dir.isDirectory) pb.directory(dir)
+                }
+                // Variables de entorno
+                if (tarea.env.isNotEmpty()) {
+                    val env = pb.environment()
+                    env.putAll(tarea.env)
+                }
+
+                proceso = pb.start()
+
+                // Registrar ejecución
                 val job: Job = currentCoroutineContext().job
                 procesosActivos[id] = proceso to job
+                emitir() // forzar refresco de botones (por si la UI se guía por esta tabla)
 
-                // Timeout por tarea (o global si la tarea no define)
-                if (timeoutThis > 0) {
+                // Timeout efectivo
+                val effectiveTimeout = tarea.timeout?.takeIf { it > 0 } ?: DEFAULT_TIMEOUT_S
+                if (effectiveTimeout > 0) {
                     timeoutJob = launch {
-                        delay(timeoutThis * 1000)
+                        delay(effectiveTimeout * 1000)
                         if (isActive && tarea.estado == EstadoTarea.EJECUTANDO) {
                             tarea.estado = EstadoTarea.ERROR
-                            tarea.error = "Timeout tras ${timeoutThis}s"
+                            tarea.error = "Timeout tras ${effectiveTimeout}s"
                             tarea.ultimaEjecucion = LocalDateTime.now()
                             emitir()
                             killProcessTree(proceso)
@@ -172,7 +191,7 @@ object GestorTareas {
                     }
                 }
 
-                // STREAMING con límite de almacenamiento (sin bloquear tubería)
+                // STREAMING con límite de almacenamiento
                 val maxBytes = MAX_SALIDA_KB * 1024
                 var usedBytes = 0
                 var truncado = false
@@ -181,7 +200,7 @@ object GestorTareas {
                     while (isActive) {
                         val line = reader.readLine() ?: break
                         if (!truncado) {
-                            val lineBytes = line.toByteArray().size + 1 // +1 por salto de línea
+                            val lineBytes = line.toByteArray().size + 1
                             if (usedBytes + lineBytes <= maxBytes) {
                                 if (tarea.salida.isNotEmpty()) tarea.salida += "\n"
                                 tarea.salida += line
@@ -198,14 +217,9 @@ object GestorTareas {
 
                 val code = proceso.waitFor()
                 tarea.ultimaEjecucion = LocalDateTime.now()
-
                 if (tarea.estado == EstadoTarea.EJECUTANDO) {
-                    if (code == 0) {
-                        tarea.estado = EstadoTarea.FINALIZADA
-                    } else {
-                        tarea.estado = EstadoTarea.ERROR
-                        if (tarea.error.isBlank()) tarea.error = "Código de salida: $code"
-                    }
+                    tarea.estado = if (code == 0) EstadoTarea.FINALIZADA else EstadoTarea.ERROR
+                    if (code != 0 && tarea.error.isBlank()) tarea.error = "Código de salida: $code"
                 }
             } catch (e: Exception) {
                 tarea.estado = EstadoTarea.ERROR
@@ -216,13 +230,11 @@ object GestorTareas {
                 procesosActivos.remove(id)
                 try { LogFiles.escribirLogEjecucion(tarea) } catch (_: Exception) {}
                 try { proceso?.destroy() } catch (_: Exception) {}
-                guardarEnDisco()
-                emitir()
+                guardarEnDisco(); emitir()
             }
         }
     }
 
-    /** Cancela la ejecución en curso de una tarea (si la hay). */
     fun cancelarEjecucion(id: Int): Boolean {
         val par = procesosActivos.remove(id) ?: return false
         val (proc, job) = par
@@ -234,29 +246,23 @@ object GestorTareas {
             error = "Ejecución cancelada por el usuario"
             ultimaEjecucion = LocalDateTime.now()
         }
-        guardarEnDisco()
-        emitir()
+        guardarEnDisco(); emitir()
         return true
     }
 
-    /** Elimina una tarea del gestor. Si está ejecutándose, la cancela antes. */
     fun eliminarTarea(id: Int) {
         if (procesosActivos.containsKey(id)) cancelarEjecucion(id)
         tareas.remove(id)
-        enableMap.remove(id)
-        timeoutMap.remove(id)
-        guardarEnDisco()
-        emitir()
+        guardarEnDisco(); emitir()
     }
 
-    /** Inicia el programador que dispara tareas con intervalo > 0. */
     fun iniciarProgramador() {
         if (programadorJob?.isActive == true) return
         programadorJob = appScope.launch {
             while (isActive) {
                 val ahora = LocalDateTime.now()
                 tareas.values.forEach { tarea ->
-                    if ((enableMap[tarea.id] ?: true) && tarea.intervalo > 0) {
+                    if (tarea.habilitada && tarea.intervalo > 0) {
                         val ultima = tarea.ultimaEjecucion
                         val trans = ultima?.let { java.time.Duration.between(it, ahora).seconds } ?: Long.MAX_VALUE
                         val puede = (tarea.estado != EstadoTarea.EJECUTANDO) && (trans >= tarea.intervalo)
@@ -273,27 +279,46 @@ object GestorTareas {
         programadorJob = null
     }
 
-    /** Actualiza una tarea existente. Devuelve true si se modificó. */
+    // Actualización “simple” (retrocompatible)
     fun actualizarTarea(id: Int, nombre: String, comando: String, intervalo: Long): Boolean {
         val t = tareas[id] ?: return false
         t.nombre = nombre
         t.comando = comando
         t.intervalo = if (intervalo < 0) 0 else intervalo
-        guardarEnDisco()
-        emitir()
+        guardarEnDisco(); emitir()
         return true
     }
 
-    /** Carga persistencia a memoria. */
+    // Actualización completa (P1)
+    fun actualizarTareaFull(
+        id: Int,
+        nombre: String,
+        comando: String,
+        intervalo: Long,
+        habilitada: Boolean,
+        cwd: String,
+        timeout: Long?,
+        env: Map<String, String>
+    ): Boolean {
+        val t = tareas[id] ?: return false
+        t.nombre = nombre
+        t.comando = comando
+        t.intervalo = if (intervalo < 0) 0 else intervalo
+        t.habilitada = habilitada
+        t.cwd = cwd.trim()
+        t.timeout = timeout?.takeIf { it > 0 }
+        t.env.clear(); t.env.putAll(env)
+        guardarEnDisco(); emitir()
+        return true
+    }
+
+    // ===== Persistencia =====
     @Synchronized
     fun cargarDesdeDisco() {
         try {
             if (!Files.exists(dataFile)) return
             val props = Properties().apply { Files.newInputStream(dataFile).use { load(it) } }
             tareas.clear()
-            enableMap.clear()
-            timeoutMap.clear()
-
             val count = props.getProperty("tareas.count")?.toIntOrNull() ?: 0
             var maxId = 0
             for (i in 1..count) {
@@ -301,18 +326,33 @@ object GestorTareas {
                 val nombre = props.getProperty("tarea.$i.nombre") ?: continue
                 val comando = props.getProperty("tarea.$i.comando") ?: continue
                 val intervalo = props.getProperty("tarea.$i.intervalo")?.toLongOrNull() ?: 0L
-                val t = Tarea(id, nombre, comando, intervalo)
+
+                val habilitada = when (props.getProperty("tarea.$i.habilitada")?.lowercase()) {
+                    "false" -> false else -> true
+                }
+                val cwd = props.getProperty("tarea.$i.cwd") ?: ""
+                val timeout = props.getProperty("tarea.$i.timeout")?.toLongOrNull()?.takeIf { it > 0 }
+
+                val envCount = props.getProperty("tarea.$i.envCount")?.toIntOrNull() ?: 0
+                val env = mutableMapOf<String, String>()
+                for (j in 0 until envCount) {
+                    val k = props.getProperty("tarea.$i.env.$j.key") ?: continue
+                    val v = props.getProperty("tarea.$i.env.$j.val") ?: ""
+                    env[k] = v
+                }
+
+                val t = Tarea(
+                    id, nombre, comando, intervalo,
+                    habilitada = habilitada, cwd = cwd, timeout = timeout, env = env
+                )
                 tareas[id] = t
-                enableMap[id]  = props.getProperty("tarea.$i.enabled")?.toBooleanStrictOrNull() ?: true
-                timeoutMap[id] = props.getProperty("tarea.$i.timeout")?.toLongOrNull() ?: 0L
                 if (id > maxId) maxId = id
             }
             contadorId = maxId
             emitir()
-        } catch (_: Exception) { /* silent */ }
+        } catch (_: Exception) { /* tolerante */ }
     }
 
-    /** Escribe persistencia a disco. */
     @Synchronized
     private fun guardarEnDisco() {
         try {
@@ -326,28 +366,33 @@ object GestorTareas {
                 props["tarea.$i.nombre"] = t.nombre
                 props["tarea.$i.comando"] = t.comando
                 props["tarea.$i.intervalo"] = t.intervalo.toString()
-                props["tarea.$i.enabled"] = (enableMap[t.id] ?: true).toString()
-                props["tarea.$i.timeout"] = (timeoutMap[t.id] ?: 0L).toString()
+                // P1 — nuevos campos
+                props["tarea.$i.habilitada"] = t.habilitada.toString()
+                props["tarea.$i.cwd"] = t.cwd
+                props["tarea.$i.timeout"] = (t.timeout ?: 0L).toString()
+                props["tarea.$i.envCount"] = t.env.size.toString()
+                var j = 0
+                t.env.forEach { (k, v) ->
+                    props["tarea.$i.env.$j.key"] = k
+                    props["tarea.$i.env.$j.val"] = v
+                    j++
+                }
             }
             Files.newOutputStream(dataFile).use { props.store(it, "Tareas PSP") }
         } catch (_: Exception) {}
     }
 
-    /** Detiene programador, mata procesos activos y cancela el scope. Para cierre limpio. */
     fun cancelAll() {
         try { programadorJob?.cancel() } catch (_: Exception) {}
         programadorJob = null
-
         procesosActivos.values.forEach { (proc, job) ->
             try { killProcessTree(proc) } catch (_: Exception) {}
             try { job.cancel() } catch (_: Exception) {}
         }
         procesosActivos.clear()
-
         try { appScope.cancel() } catch (_: Exception) {}
     }
 
-    // --- Kill de árbol de procesos (Windows) o destroy simple (Unix) ---
     private fun killProcessTree(proc: Process?) {
         if (proc == null) return
         if (OS_IS_WINDOWS) {
@@ -362,7 +407,7 @@ object GestorTareas {
             try {
                 proc.destroy()
                 if (proc.isAlive) proc.destroyForcibly()
-            } catch (_: Exception) { /* no-op */ }
+            } catch (_: Exception) {}
         }
     }
 }
