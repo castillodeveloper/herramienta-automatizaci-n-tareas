@@ -106,7 +106,6 @@ fun App() {
                         }
                     }
 
-                    // Aviso si parece comando "infinito" y el intervalo es 0
                     val intervaloL = intervaloTxt.toLongOrNull() ?: 0L
                     if (comando.isNotBlank() && GestorTareas.requiereIntervalo(comando) && intervaloL == 0L) {
                         Text(
@@ -144,7 +143,6 @@ private fun TareaRow(
     var editOpen by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
-    // Copias editables (para el diálogo)
     var editNombre by remember { mutableStateOf(t.nombre) }
     var editComando by remember { mutableStateOf(t.comando) }
     var editIntervalo by remember { mutableStateOf(t.intervalo.toString()) }
@@ -167,7 +165,6 @@ private fun TareaRow(
             )
             EstadoPill(t.estado)
 
-            // Habilitada toggle
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Habilitada", modifier = Modifier.padding(end = 6.dp))
                 Switch(
@@ -180,11 +177,7 @@ private fun TareaRow(
             }
 
             // === Botones ===
-            val isRunning = try {
-                GestorTareas.estaEjecutando(t.id) || t.estado == EstadoTarea.EJECUTANDO
-            } catch (_: Throwable) {
-                t.estado == EstadoTarea.EJECUTANDO
-            }
+            val isRunning = GestorTareas.estaEjecutando(t.id)
 
             Button(
                 onClick = { GestorTareas.ejecutarTarea(t.id); onInfo("Ejecución lanzada: ${t.nombre}") },
@@ -219,7 +212,6 @@ private fun TareaRow(
             OutlinedButton(onClick = { confirmDelete = true }) { Text("Eliminar") }
         }
 
-        // ==== Ver Log ====
         if (verLog) {
             AlertDialog(
                 onDismissRequest = { verLog = false },
@@ -241,7 +233,6 @@ private fun TareaRow(
             )
         }
 
-        // ==== Editar (P1 completo) ====
         if (editOpen) {
             val intervaloVal = editIntervalo.toLongOrNull() ?: -1
             val timeoutVal = editTimeout.toLongOrNull() ?: 0L
@@ -252,42 +243,27 @@ private fun TareaRow(
                 title = { Text("Editar tarea #${t.id}") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(editNombre, { editNombre = it }, label = { Text("Nombre") }, singleLine = true)
+                        OutlinedTextField(editComando, { editComando = it }, label = { Text("Comando o script") }, singleLine = true)
                         OutlinedTextField(
-                            value = editNombre, onValueChange = { editNombre = it },
-                            label = { Text("Nombre") }, singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = editComando, onValueChange = { editComando = it },
-                            label = { Text("Comando o script") }, singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = editIntervalo,
-                            onValueChange = { editIntervalo = it.filter(Char::isDigit) },
+                            editIntervalo, { editIntervalo = it.filter(Char::isDigit) },
                             label = { Text("Intervalo (s)") }, singleLine = true
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = editHabilitada, onCheckedChange = { editHabilitada = it })
                             Text("Habilitada", modifier = Modifier.padding(start = 4.dp))
                         }
+                        OutlinedTextField(editCwd, { editCwd = it }, label = { Text("Directorio de trabajo (opcional)") }, singleLine = true)
                         OutlinedTextField(
-                            value = editCwd, onValueChange = { editCwd = it },
-                            label = { Text("Directorio de trabajo (opcional)") }, singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = editTimeout,
-                            onValueChange = { editTimeout = it.filter(Char::isDigit) },
+                            editTimeout, { editTimeout = it.filter(Char::isDigit) },
                             label = { Text("Timeout (s) — vacío/0 = sin límite") }, singleLine = true
                         )
                         OutlinedTextField(
-                            value = editEnvText,
-                            onValueChange = { editEnvText = it },
+                            editEnvText, { editEnvText = it },
                             label = { Text("Variables de entorno (KEY=VALUE, una por línea)") },
-                            singleLine = false,
-                            modifier = Modifier.height(120.dp)
+                            singleLine = false, modifier = Modifier.height(120.dp)
                         )
-                        if (!valido) {
-                            Text("Completa todos los campos (intervalo ≥ 0).", color = MaterialTheme.colors.error)
-                        }
+                        if (!valido) Text("Completa todos los campos (intervalo ≥ 0).", color = MaterialTheme.colors.error)
                     }
                 },
                 confirmButton = {
@@ -314,7 +290,6 @@ private fun TareaRow(
             )
         }
 
-        // ==== Confirmar borrado ====
         if (confirmDelete) {
             AlertDialog(
                 onDismissRequest = { confirmDelete = false },
@@ -333,14 +308,13 @@ private fun TareaRow(
     }
 }
 
-/** Píldora de estado */
 @Composable
 private fun EstadoPill(estado: EstadoTarea) {
     val (bg, fg) = when (estado) {
-        EstadoTarea.PENDIENTE   -> Color(0xFFE3F2FD) to Color(0xFF0D47A1)
-        EstadoTarea.EJECUTANDO  -> Color(0xFFFFF3E0) to Color(0xFFE65100)
-        EstadoTarea.FINALIZADA  -> Color(0xFFE8F5E9) to Color(0xFF1B5E20)
-        EstadoTarea.ERROR       -> Color(0xFFFFEBEE) to Color(0xFFB71C1C)
+        EstadoTarea.PENDIENTE -> Color(0xFFE3F2FD) to Color(0xFF0D47A1)
+        EstadoTarea.EJECUTANDO -> Color(0xFFFFF3E0) to Color(0xFFE65100)
+        EstadoTarea.FINALIZADA -> Color(0xFFE8F5E9) to Color(0xFF1B5E20)
+        EstadoTarea.ERROR -> Color(0xFFFFEBEE) to Color(0xFFB71C1C)
     }
     Text(
         text = estado.name,
@@ -357,23 +331,14 @@ private fun EstadoPill(estado: EstadoTarea) {
     )
 }
 
-/* ==== Helpers edición/env ==== */
 private fun parseEnvLines(text: String): Map<String, String> =
-    text.lines()
-        .mapNotNull { line ->
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) null
-            else {
-                val idx = trimmed.indexOf('=')
-                if (idx <= 0) null
-                else trimmed.substring(0, idx).trim() to trimmed.substring(idx + 1).trim()
-            }
-        }.toMap()
+    text.lines().mapNotNull { line ->
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) null else {
+            val idx = trimmed.indexOf('=')
+            if (idx <= 0) null else trimmed.substring(0, idx).trim() to trimmed.substring(idx + 1).trim()
+        }
+    }.toMap()
 
 private fun envToLines(env: Map<String, String>): String =
-    buildString {
-        env.forEach { (k, v) ->
-            if (isNotEmpty()) append('\n')
-            append(k).append('=').append(v)
-        }
-    }
+    env.entries.joinToString("\n") { "${it.key}=${it.value}" }
